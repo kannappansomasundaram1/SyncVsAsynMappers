@@ -12,9 +12,12 @@ public class SyncVsAsyncMappers
         { 1, "London" },
         { 2, "Paris" }
     };
+    
+    [Params(10, 25, 100)]
+    public int NumberOfDays;
 
     [Benchmark(Baseline = true)]
-    public async Task<MappedWeatherResponse[]> GetWeatherResponseAsynMapper()
+    public async Task<MappedWeatherResponse[]> GetWeatherResponseAsyncMapper()
     {
         var WeatherMapperTasks = GetWeather()
             .Select(MapWeatherDataAsync);
@@ -22,21 +25,42 @@ public class SyncVsAsyncMappers
     }
     
     [Benchmark]
+    public async Task<MappedWeatherResponse[]> GetWeatherResponseAsyncMapperValueTask()
+    {
+        var WeatherMapperTasks = GetWeather()
+            .Select(MapWeatherDataAsyncValueTask);
+        return await Task.WhenAll(WeatherMapperTasks);
+    }
+    
+    [Benchmark]
     public async Task<MappedWeatherResponse[]> GetWeatherResponseSyncMapper()
     {
         var weatherResponses = GetWeather().ToArray();
-        var cityName = await GetCityName(weatherResponses.First().Id);
-        
-        
-        
+        var distinctCityIds = weatherResponses.Select(x => x.Id).Distinct();
+
+        var cityNameById = await ResolveReferenceData(distinctCityIds);
+
         return weatherResponses
-            .Select(response => MapWeatherDataSync(response, cityName))
+            .Select(response => MapWeatherDataSync(response, cityNameById))
             .ToArray();
     }
 
-    private static IEnumerable<WeatherResponse> GetWeather()
+    private async Task<Dictionary<int, string>> ResolveReferenceData(IEnumerable<int> distinctCityIds)
     {
-        return Enumerable.Range(1, 10)
+        var cityNameById = new Dictionary<int, string>();
+
+        foreach (var cityId in distinctCityIds)
+        {
+            var cityName = await GetCityName(cityId);
+            cityNameById.Add(cityId, cityName);
+        }
+
+        return cityNameById;
+    }
+
+    private IEnumerable<WeatherResponse> GetWeather()
+    {
+        return Enumerable.Range(1, NumberOfDays)
             .Select(i => new WeatherResponse(1, DateOnly.FromDateTime(DateTime.Today).AddDays(i) , 40 + i));
     }
 
@@ -47,13 +71,26 @@ public class SyncVsAsyncMappers
             CelsiusToFahrenheit(weatherResponse.TemperatureInCelsius));
     }
     
-    private MappedWeatherResponse MapWeatherDataSync(WeatherResponse weatherResponse, string CityName)
+    private async Task<MappedWeatherResponse> MapWeatherDataAsyncValueTask(WeatherResponse weatherResponse)
     {
-        return new MappedWeatherResponse(CityName, weatherResponse.date,
+        var cityName = await GetCityNameValueTask(weatherResponse.Id);
+        return new MappedWeatherResponse(cityName, weatherResponse.date,
+            CelsiusToFahrenheit(weatherResponse.TemperatureInCelsius));
+    }
+    
+    private MappedWeatherResponse MapWeatherDataSync(WeatherResponse weatherResponse, IReadOnlyDictionary<int, string> CityNameById)
+    {
+        return new MappedWeatherResponse(CityNameById[weatherResponse.Id], weatherResponse.date,
             CelsiusToFahrenheit(weatherResponse.TemperatureInCelsius));
     }
 
     private async Task<string> GetCityName(int cityId)
+    {
+        await Task.Delay(0);
+        return CityById[cityId];
+    }
+    
+    private async ValueTask<string> GetCityNameValueTask(int cityId)
     {
         await Task.Delay(0);
         return CityById[cityId];
